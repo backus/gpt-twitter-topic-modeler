@@ -5,6 +5,8 @@ from hashlib import md5
 import pathlib
 import logging
 import argparse
+import sys
+import pdb
 
 from dotenv import load_dotenv
 import tweepy
@@ -42,7 +44,7 @@ class TweetScraper:
             max_id = tweets[-1]['id'] - 1
 
         self.logger.info(f'Downloaded a total of {len(all_tweets)} tweets.')
-        return all_tweets
+        return TweetCollection(all_tweets)
 
     def __get_cache_filename(self, user_id, max_id):
         hash_input = f'{user_id}-{max_id}' if max_id else f'{user_id}-None'
@@ -65,6 +67,25 @@ class TweetScraper:
             tweets = list(tweets)
             self.__save_tweets_to_file(tweets, cache_file)
             return [tweet._json for tweet in tweets]
+
+
+class TweetCollection:
+    def __init__(self, tweets):
+        self.tweets = tweets
+
+    def primary_tweet_texts(self):
+        selected = []
+        for tweet in self.tweets:
+            is_reply = tweet['in_reply_to_status_id'] is not None
+            is_self_reply = tweet['in_reply_to_user_id'] == tweet['user']['id']
+            is_retweet = tweet['retweeted']
+            if is_retweet:
+                continue
+            if is_reply and not is_self_reply:
+                continue
+            selected.append(tweet['full_text'])
+
+        return selected
 
 
 class CLI:
@@ -140,8 +161,49 @@ class GPTTopicModel:
         self.data_dir = data_dir / "topics" / model
         self.model = model
 
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
     def generate_topics(self):
-        return self.__chunked_tweets()
+        chunks = self.__chunked_tweets()
+        raw_topics = []
+        for chunk in chunks:
+            raw_topics.append(self.__topics_for_chunk_with_retry(chunk))
+
+        return raw_topics
+
+    def __topics_for_chunk_with_retry(self, chunk, retry=True):
+        try:
+            return self.__topics_for_chunk(chunk)
+        except openai.error.OpenAIError as e:
+            if retry:
+                print(f"Got API error {e}, retrying")
+                return self.__topics_for_chunk_with_retry(chunk, retry=False)
+            else:
+                raise e
+
+    def __topics_for_chunk(self, chunk):
+        tweet_block = "\n===\n".join(chunk)
+        messages = [GPTTopicModel.CHAT_PRELUDE, {
+            "role": "user", "content": tweet_block
+        }]
+
+        digest = md5(json.dumps(messages).encode('utf-8')).hexdigest()
+        cache_file = self.data_dir / f"topics_{digest}.json"
+
+        if cache_file.exists():
+            print("Getting completion from cache")
+            return json.loads(cache_file.read_text())
+        else:
+            print("Getting completion from API")
+            response = openai.ChatCompletion.create(
+                messages=messages,
+                model=self.model,
+                temperature=0.0,
+                max_tokens=100
+            )
+            raw = response.to_dict_recursive()
+            cache_file.write_text(json.dumps(raw))
+            return raw
 
     def __chunked_tweets(self):
         encoding = tiktoken.encoding_for_model(self.model)
@@ -176,11 +238,10 @@ def main():
     twitter = bootstrap.twitter_client()
 
     scraper = TweetScraper(twitter, args['data_dir'], args['username'])
-    tweets = scraper.all_tweets()
-    tweet_texts = [tweet['full_text'] for tweet in tweets]
+    tweets = scraper.all_tweets().primary_tweet_texts()
 
     modeler = GPTTopicModel(
-        tweet_texts, args['data_dir'], args['openai_model']
+        tweets, args['data_dir'], args['openai_model']
     )
     print(modeler.generate_topics())
 
