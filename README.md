@@ -5,8 +5,7 @@ Scrape the tweets from a user (excluding retweets and replies) and then generate
 ## Example:
 
 ```sh
-(venv) (master) ~/dev/twitter-topic-model
-$ python twitter_topic_model.py --username backus                 last exit code = 130
+$ python twitter_topic_model.py --username backus
 {
   "AI Tools": {
     "Copilot in terminal": [
