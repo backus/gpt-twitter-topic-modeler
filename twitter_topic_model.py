@@ -64,32 +64,45 @@ class TweetScraper:
             self.__save_tweets_to_file(tweets, cache_file)
             return [tweet._json for tweet in tweets]
 
-'''
-A class named CLI that parses the following CLI arguments using argparse:
-    --data-dir (str) (optional): The directory where the data will be stored.
-    --username (str) (required): The Twitter username to scrape.
-'''
 class CLI:
     PROJECT_ROOT = pathlib.Path(__file__).parent
+    DEFAULT_MODEL = 'gpt-3.5-turbo'
 
     def __init__(self):
         self.parser = argparse.ArgumentParser()
         self.parser.add_argument('--data-dir', type=str, default=str(CLI.PROJECT_ROOT / 'data'))
         self.parser.add_argument('--username', type=str, required=True)
+        self.parser.add_argument('--openai-model', type=str, default=CLI.DEFAULT_MODEL)
 
     def parse_args(self):
         args = self.parser.parse_args()
         return { "data_dir": pathlib.Path(args.data_dir), "username": args.username}
 
+class Bootstrap:
+    def __init__(self):
+        load_dotenv()
+
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        self.twitter_consumer_key = os.getenv("TWITTER_CONSUMER_KEY")
+        self.twitter_consumer_secret = os.getenv("TWITTER_CONSUMER_SECRET")
+        self.twitter_token = os.getenv("TWITTER_TOKEN")
+        self.twitter_secret = os.getenv("TWITTER_SECRET")
+
+    def setup_openai(self):
+        openai.api_key = self.openai_api_key
+
+    def twitter_client(self):
+        twitter_auth = tweepy.OAuthHandler(self.twitter_consumer_key, self.twitter_consumer_secret)
+        twitter_auth.set_access_token(self.twitter_token, self.twitter_secret)
+        twitter = tweepy.API(twitter_auth, wait_on_rate_limit=True)
+        return twitter
+
 def main():
     args = CLI().parse_args()
-    load_dotenv()
+    bootstrap = Bootstrap()
 
-    openai.api_key = os.getenv('OPENAI_API_KEY')
-
-    twitter_auth = tweepy.OAuthHandler(os.getenv("TWITTER_CONSUMER_KEY"), os.getenv("TWITTER_CONSUMER_SECRET"))
-    twitter_auth.set_access_token(os.getenv("TWITTER_TOKEN"), os.getenv("TWITTER_SECRET"))
-    twitter = tweepy.API(twitter_auth, wait_on_rate_limit=True)
+    bootstrap.setup_openai()
+    twitter = bootstrap.twitter_client()
 
     scraper = TweetScraper(twitter, args['data_dir'], args['username'])
     scraper.all_tweets()
