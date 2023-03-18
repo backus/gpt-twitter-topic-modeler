@@ -6,7 +6,7 @@ import pathlib
 import logging
 import argparse
 import sys
-import pdb
+import re
 
 from dotenv import load_dotenv
 import tweepy
@@ -165,11 +165,59 @@ class GPTTopicModel:
 
     def generate_topics(self):
         chunks = self.__chunked_tweets()
-        raw_topics = []
+        completions = []
         for chunk in chunks:
-            raw_topics.append(self.__topics_for_chunk_with_retry(chunk))
+            completions.append(self.__topics_for_chunk_with_retry(chunk))
 
-        return raw_topics
+        raw_topics = []
+        for completion in completions:
+            raw_topics.append(completion['choices'][0]['message']['content'])
+
+        return self.__parse_raw_topics("\n\n".join(raw_topics))
+
+    def __parse_raw_topics(self, raw_topics):
+        def in_groups(str):
+            lines = str.splitlines()
+            groups = []
+            current_group = []
+            for line in lines:
+                if re.match(r"^[a-zA-Z]", line):
+                    if len(current_group) > 0:
+                        groups.append(current_group)
+                        current_group = []
+                current_group.append(line)
+
+            if len(current_group) > 0:
+                groups.append(current_group)
+
+            return groups
+
+        topics = {}
+        groups = in_groups(raw_topics)
+        for group in groups:
+            topic = group[0]
+            if len(topic.strip()) == 0:
+                continue
+            lines = group[1:]
+            subtopic_sentiment_pairs = []
+            for line in lines:
+                line = re.sub(r"^\s*-\s*", "", line)
+                parts = re.split(r"\s+-\s+", line)
+                if len(parts) != 2:
+                    print(f"warning: malformed line from GPT: {parts}")
+                    continue
+                subtopic, sentiment = parts
+                subtopic_sentiment_pairs.append((subtopic, sentiment))
+
+            if topic not in topics:
+                topics[topic] = {}
+
+            for (subtopic, sentiment) in subtopic_sentiment_pairs:
+                if subtopic not in topics[topic]:
+                    topics[topic][subtopic] = []
+                topics[topic][subtopic].append(sentiment)
+
+        return topics
 
     def __topics_for_chunk_with_retry(self, chunk, retry=True):
         try:
@@ -243,7 +291,7 @@ def main():
     modeler = GPTTopicModel(
         tweets, args['data_dir'], args['openai_model']
     )
-    print(modeler.generate_topics())
+    print(json.dumps(modeler.generate_topics(), indent=2))
 
 
 if __name__ == '__main__':
