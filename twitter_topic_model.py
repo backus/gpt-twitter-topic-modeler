@@ -20,6 +20,8 @@ class TweetScraper:
         self.data_dir = pathlib.Path(data_dir) / 'tweets' / username
         self.username = username
 
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+
         self.logger = logging.getLogger('TweetScraper')
         self.logger.handlers.clear()
         handler = logging.StreamHandler()
